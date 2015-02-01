@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+import optparse
+import sys
+from collections import defaultdict
+
+optparser = optparse.OptionParser()
+optparser.add_option("-b", "--bitext", dest="bitext", default="data/dev-test-train.de-en", help="Parallel corpus (default data/dev-test-train.de-en)")
+optparser.add_option("-t", "--threshold", dest="threshold", default=0.5, type="float", help="Threshold for aligning with Dice's coefficient (default=0.5)") #sets default T
+optparser.add_option("-n", "--num_sentences", dest="num_sents", default=sys.maxint, type="int", help="Number of sentences to use for training and alignment")
+optparser.add_option("-i", "--iterations",dest="iterations",default=1,type="int",help="Number of iterations of EM")
+(opts, _) = optparser.parse_args()
+
+sys.stderr.write("")
+bitext = [[sentence.strip().split() for sentence in pair.split(' ||| ')] for pair in open(opts.bitext)][:opts.num_sents]
+
+co_occur = defaultdict(set)
+orig = bitext
+f_vocab = set()
+
+for(f,e) in bitext:
+	for f_j in f:
+		if(len(f_j) > 2):
+			f_vocab.add(f_j)
+		if f_j[-2:] == "en":
+			f_j = f_j[:-2]
+	for e_i in e:
+		if e_i[-1] == "s":
+			e_i = e_i[:-1] 
+
+changed = False
+split = []
+for n, (f,e) in enumerate(bitext):
+	#print f
+	fsplit = []
+	changed = False
+	for j, f_j in enumerate(f):
+		compound = False
+		for i in range(len(f_j)):
+			if (f_j[:i] in f_vocab) and (f_j[i:] in f_vocab):
+				fsplit.append(f_j[:i])
+				fsplit.append(f_j[i:])
+				changed = True
+				compound = True
+				print f_j, f_j[:i],'-',f_j[i:]
+		if compound == False:
+			fsplit.append(f_j)
+	split.append(fsplit)
+	if changed == True:
+		print f, "\n",fsplit
+		changed = False
+
+for (n, (f,e)) in enumerate(bitext):
+	for e_j in e:
+		for f_i in f:
+			co_occur[f_i].add(e_j)
+	if n % 500 == 0: sys.stderr.write(".")
+
+p = dict()
+for f_j in co_occur.keys():
+	l = len(co_occur[f_j])
+	p[f_j] = defaultdict(lambda: 1.0/l)
+
+for i in range (opts.iterations):
+	count = defaultdict(lambda: defaultdict(float))
+	for(n, (f,e)) in enumerate(bitext):
+		c= 1.0/len(f)
+		for e_i in e:
+			norm_e = 0
+			for f_j in f:
+				norm_e+=p[f_j][e_i]
+			for f_j in f:
+				count[f_j][e_i] += p[f_j][e_i]/norm_e
+	for f in count.keys():
+		norm = float(sum(count[f][e] for e in co_occur[f]))
+		for e in co_occur[f]:
+			p[f][e] = count[f][e]/norm
+sys.stderr.write('completed iterations')
+
+for (f,e) in bitext:
+	alignment = []
+	for i, e_i in enumerate(e):
+		pmax = 0
+		maxi = 0
+		for j, f_j in enumerate(f):
+			if p[f_j][e_i] > pmax:
+				pmax = p[f_j][e_i]
+				maxi = j
+		alignment.append('{}-{}'.format(maxi,i))
+	#print '  '.join(alignment)
+sys.stderr.write('completed alignment')
+				
+			
+	
+
+

@@ -15,3 +15,7 @@ The `data/` directory contains a fragment of the German/English Europarl corpus.
 
  - `data/dev.align` contains 150 manual alignments corresponding to the first 150 sentences of the parallel corpus. When you run `./check` these are used to compute the alignment error rate. You may use these in any way you choose. The notation `i-j` means the word at position *i* (0-indexed) in the German sentence is aligned to the word at position *j* in the English sentence; the notation `i?j` means they are "probably" aligned.
 
+
+IBM_Model1 is my implementation of the IBM Model 1.
+
+IBMsplit is the IBM Model 1 augmented to have compound splitting. If a German word can be split into two substrings that are both observed words, it splits it before continuing with the IBM model, and after the alignment is complete, the indexes are returned to those of the original words. It also has some crude stemming,  mostly to catch regular plurals in both languages but that will also catch lots of German verbs--to be improved.
