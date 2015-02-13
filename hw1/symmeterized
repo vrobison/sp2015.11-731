@@ -1,0 +1,184 @@
+#!/usr/bin/env python
+import optparse
+import sys
+from collections import defaultdict
+import string 
+
+optparser = optparse.OptionParser()
+optparser.add_option("-b", "--bitext", dest="bitext", default="data/dev-test-train.de-en", help="Parallel corpus (default data/dev-test-train.de-en)")
+optparser.add_option("-t", "--threshold", dest="threshold", default=0.5, type="float", help="Threshold for aligning with Dice's coefficient (default=0.5)") #sets default T
+optparser.add_option("-n", "--num_sentences", dest="num_sents", default=sys.maxint, type="int", help="Number of sentences to use for training and alignment")
+optparser.add_option("-i", "--iterations",dest="iterations",default=1,type="int",help="Number of iterations of EM")
+(opts, _) = optparser.parse_args()
+
+sys.stderr.write("")
+bitext = [[sentence.strip().split() for sentence in pair.split(' ||| ')] for pair in open(opts.bitext)][:opts.num_sents]
+
+def growDiag(alignment, union):
+	iFs = []
+	iEs = []
+	for (f_j,e_i) in alignment: 
+		iFs.append(f_j)
+		iEs.append(e_i) 
+	grown = alignment
+	#print '  '.join(alignment2)
+	added = True
+	n = 0
+	while added:
+		added = False
+		for (j,i) in grown:
+			diag = [(j+1,i),(j+1,i+1),(j+1,i-1),(j,i+1),(j-1,i),(j-1,i-1),(j-1,i+1),(j,i-1)]
+			for (jD,iD) in diag:
+				if (jD,iD) in union and (jD not in iFs or iD not in iEs):
+					#print d
+					grown.append((jD,iD))
+					iFs.append(jD)
+					iEs.append(iD)
+					added = True
+	return grown
+
+def finalAnd(grown,union):
+	iFs = []
+	iEs = []
+	for (f_j,e_i) in grown:
+			iFs.append(f_j)
+			iEs.append(e_i) 
+	for (j,i) in union:
+		if j not in iFs and i not in iEs:
+			grown.append((j,i))
+	return grown
+
+
+co_occur = defaultdict(set)
+f_vocab_ct = dict()
+f_vocab = set()
+co_occur2 = defaultdict(set)
+e_vocab = defaultdict()
+
+#really basic stemming
+for n,(f,e) in enumerate(bitext):
+	for f_j in f:
+		f_j = string.lower(f_j)
+		#if f_j[:-2] == "en":
+		#	f_j = f_j[:-2]
+	#	f_vocab.add(f_j)
+	#	if f_j not in f_vocab_ct.keys():
+	#		f_vocab_ct[f_j] = 1
+	#	else: f_vocab_ct[f_j] += 1
+	for e_i in e:
+		e_i = string.lower(e_i)
+		#if e_i[:-1] == "s":
+		#	e_i = e_i[:-1] 
+	f.append("NULL")
+	if n % 500 == 0: sys.stderr.write("*")
+changed = False
+split = []
+for n, (f,e) in enumerate(bitext):
+	#print f
+	fsplit = []
+#	changed = False
+	for j, f_j in enumerate(f):
+#		compound = False
+#		ctmax = 0
+#		for i in range(len(f_j)):
+#			if (f_j[:i] in f_vocab and f_j[i:] in f_vocab):
+#				splitct = f_vocab_ct[f_j[:i]] + f_vocab_ct[f_j[i:]]
+#				if splitct/2 > f_vocab_ct[f_j] and splitct > ctmax:
+#					ctmax = f_vocab_ct[f_j[:i]] + f_vocab_ct[f_j[i:]]
+#					imax = i
+#					changed = True
+#					compound = True
+#		if compound == True:
+#			fsplit.append((f_j[:imax],j))
+#			fsplit.append((f_j[imax:],j))
+				#print f_j, f_j[:i],'-',f_j[i:]
+#		else:
+		fsplit.append((f_j,j))
+	split.append(fsplit)
+	
+for n, (f,e) in enumerate(bitext):
+	for e_i in e:
+		for (f_j,j) in split[n]:
+			co_occur[f_j].add(e_i)
+			co_occur2[e_i].add(f_j)
+	if n % 500 == 0: sys.stderr.write(".")
+
+p = dict()
+for f_j in co_occur.keys():
+	l = len(co_occur[f_j])
+	p[f_j] = defaultdict(lambda: 1.0/l)
+p2 = dict()
+for e_i in co_occur2.keys():
+	l = len(co_occur2[e_i])
+	p2[e_i] = defaultdict(lambda: 1.0/l)
+
+for i in range (opts.iterations):
+	count = defaultdict(lambda: defaultdict(float))
+	count2 = defaultdict(lambda: defaultdict(float))
+	for(n, (f,e)) in enumerate(bitext):
+		c = 1.0/len(split[n])
+		for e_i in e:
+			norm_e = 0
+			for (f_j,j) in split[n]:
+				norm_e+=p[f_j][e_i]
+			for (f_j,j) in split[n]:
+				count[f_j][e_i] += p[f_j][e_i]/norm_e
+		#reverse
+		for (f_j,j) in split[n]:
+			norm_f = 0
+			for e_i in e:
+				norm_f+=p2[e_i][f_j]
+			for e_i in e:
+				count2[e_i][f_j] += p2[e_i][f_j]/norm_f
+
+	for f in count.keys():
+		norm = float(sum(count[f][e] for e in co_occur[f]))
+		for e in co_occur[f]:
+			p[f][e] = count[f][e]/norm
+	for e in count2.keys():
+		norm2 = float(sum(count2[e][f] for f in co_occur2[e]))
+		for f in co_occur2[e]:
+			p2[e][f] = count2[e][f]/norm2
+sys.stderr.write('completed iterations')
+del co_occur
+del co_occur2
+for n, (f,e) in enumerate(bitext[:301]):
+	alignment = []
+	alignment2 = []
+	for i, e_i in enumerate(e):
+		pmax = 0
+		maxj = 0
+		pmax2 = 0
+		maxi = 0
+		j2 = 0
+		#for j, f_j in enumerate(f):
+		for (f_j,j) in split[n]:
+			if p[f_j][e_i] > pmax or (p[f_j][e_i] == pmax and abs(j/float(len(split[n]))-i/float(len(e))) < abs(maxj/float(len(split[n]))-i/float(len(e)))):
+				pmax = p[f_j][e_i]
+				maxj = split[n][j][1]		
+			if p2[e_i][f_j] > pmax2 or (p2[e_i][f_j] == pmax and abs(j/float(len(split[n]))-i/float(len(e))) < abs(j2/float(len(split[n]))-maxi/float(len(e)))):
+				pmax2 = p2[e_i][f_j]
+				maxi = i
+				j2 = split[n][j][1]
+		alignment.append((maxj,i)) #maxj = index of j
+		alignment2.append((j2,maxi))
+	#print '  '.join(alignment)
+	#print "alignment", alignment
+	#print "alignment2",alignment2
+	#print f,e
+	#print 'e',e,'f',f,'a','  '.join(alignment)	
+	union = set(alignment) | set(alignment2)
+	intersection = list(set(alignment) & set(alignment2))   
+	growIntersection = growDiag(intersection, union)
+	final= finalAnd(growIntersection, union)
+	fin = []
+	for (j,i) in final:
+			if f[j] != "NULL":
+				fin.append(str(j)+'-'+str(i))
+	fin = sorted(fin,key=lambda x: x[1])
+	print '  '.join(fin)
+sys.stderr.write('completed alignment')
+				
+				
+
+
