@@ -18,4 +18,8 @@ The `data/` directory contains a fragment of the German/English Europarl corpus.
 
 IBM_Model1 is my implementation of the IBM Model 1.
 
-IBMsplit is the IBM Model 1 augmented to have compound splitting. If a German word can be split into two substrings that are both observed words, it splits it before continuing with the IBM model, and after the alignment is complete, the indexes are returned to those of the original words. It also has some crude stemming,  mostly to catch regular plurals in both languages but that will also catch lots of German verbs--to be improved.
+IBMsplit is the IBM Model 1 augmented to have compound splitting. If a German word can be split into two substrings that are both observed words, it splits it and adds the split pieces before continuing with the IBM model, and after the alignment is complete, the indexes are returned to those of the original words. I tried replaceing the original word with the splits, but found it was worse than the base line and having both performed very slightly better. It also has some crude stemming,  mostly to catch regular plurals in both languages but that will also catch lots of German verbs--to be improved.
+
+symmeterized has symmeterization, grow-diag, and final-and. I got rid of the inneficient compound splitting above and ran it on a lowercased version of the bitext.
+
+compoundsplit has everything in symmeterized but also handles inputting a copy of the German text after being run through the cdec compound splitter, using the split text to train, and aligns using the original indices.

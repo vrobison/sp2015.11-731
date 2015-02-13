@@ -139,6 +139,7 @@ for i in range (opts.iterations):
 		norm2 = float(sum(count2[e][f] for f in co_occur2[e]))
 		for f in co_occur2[e]:
 			p2[e][f] = count2[e][f]/norm2
+	sys.stderr.write("completed iteration "+str(i))
 sys.stderr.write('completed iterations')
 del co_occur
 del co_occur2
