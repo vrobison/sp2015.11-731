@@ -22,4 +22,4 @@ IBMsplit is the IBM Model 1 augmented to have compound splitting. If a German wo
 
 symmeterized has symmeterization, grow-diag, and final-and. I got rid of the inneficient compound splitting above and ran it on a lowercased version of the bitext.
 
-compoundsplit has everything in symmeterized but also handles inputting a copy of the German text after being run through the cdec compound splitter, using the split text to train, and aligns using the original indices.
+compoundsplit has everything in symmeterized but also handles inputting a copy of the German text after being run through the cdec compound splitter, using the split text to train, and aligns using the original indices.--aborted due to pipe issues, too late to fix now before midnight
