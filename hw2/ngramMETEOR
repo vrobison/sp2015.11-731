@@ -1,0 +1,160 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import argparse # optparse is deprecated
+from itertools import islice # slicing for iterators
+from nltk.corpus import wordnet as wn
+import nltk
+import sys
+import unicodedata
+from unidecode import unidecode
+
+# DRY
+def remove_accents(h):
+	stripped = []
+	for s in h:
+		stripped.append(unidecode(s))     
+	return stripped
+def synByPOS(word,POS):
+	if POS[0] == 'N':
+		return wn.synsets(word,pos=wn.NOUN)
+	elif POS[0] == 'V':
+		return wn.synsets(word,pos=wn.VERB)
+	elif POS[:2] == 'RB':
+			return wn.synsets(word,pos=wn.ADV)
+	elif POS[0] == 'J':
+		return wn.synsets(word,pos=wn.ADJ)
+def syn_matches(h, ref):
+	ct = 0
+	rem = []
+	allSyns = set()
+	for r,POS in ref:
+		#print POS
+		syns = synByPOS(r,POS)
+		if syns:
+			for s in syns:
+				s = str(s)[8:-7]
+				allSyns.add(s)
+	for w in h:
+		if w in allSyns:
+			ct+=1
+		else: rem.append(w) 
+	return (ct,rem) 
+
+def exact_matches(h, ref):
+	ct = 0
+	rem = []
+	for w in h:
+		if w in ref:
+			ct +=1
+		else: rem.append(w)
+	return (ct,rem) 
+    # or sum(w in ref for w in f) # cast bool -> int
+    # or sum(map(ref.__contains__, h)) # ugly!
+
+def stem_matches(h,ref):
+	ct = 0
+	rem = []
+	for n,r in enumerate(ref):
+		if len(r) > 4:
+			ref[n] = r[:5]		
+	for w in h:
+		if w[:5] in ref:
+			ct+=1
+		else: rem.append(w)
+	return(ct,rem)
+
+def func_matches(h, ref):
+	func = set(['a','and','the','it','be','will','him','her','he','she','they','us'])
+	return sum(1 for w in h if w in ref and w in func) 
+
+def Hmean(a,p,r):
+	if p == 0 and r == 0:
+		return 0
+	else: return 2*p*r/(a*p+(1-a)*r)
+
+def ngrammer(h):
+	ngrams = h
+	for n in range(len(h)-2):
+		ngrams.append(h[n] + ' '+h[n+1])
+	for n in range(len(h)-3):
+		ngrams.append(h[n] + ' '+h[n+1]+' '+h[n+2])
+	return ngrams
+def stemmer(h):
+	stemmed = []
+	for w in h:
+		if len(w) > 4:
+			w = w[:5]
+		stemmed.append(w)
+	return stemmed 
+def main():
+	parser = argparse.ArgumentParser(description='Evaluate translation hypotheses.')
+    # PEP8: use ' and not " for strings
+	parser.add_argument('-i', '--input', default='data/train-test.hyp1-hyp2-ref',
+            help='input file (default data/train-test.hyp1-hyp2-ref)')
+	parser.add_argument('-n', '--num_sentences', default=None, type=int,
+            help='Number of hypothesis pairs to evaluate')
+	parser.add_argument('-a', '--alpha', default=0.5, type=float,
+            help='recall vs. precision tradeoff')
+	parser.add_argument('-d','--delta',default=.5,type=float,
+			help='weight of content vs function words')
+	parser.add_argument('-s','--syndisc',default=1,type=float,
+			help='value to discount synonym matches by')
+    # note that if x == [1, 2, 3], then x[:None] == x[:] == x (copy); no need for sys.maxint
+	opts = parser.parse_args()
+    # we create a generator and avoid loading all sentences into a list
+	def sentences():
+		with open(opts.input) as f:
+			for pair in f:
+				yield [sentence.strip().split() for sentence in pair.split(' ||| ')]
+    # note: the -n option does not work in the original code
+	for h1, h2, ref in islice(sentences(), opts.num_sentences):
+		#temporary-WordNet really dislikes non-English characters
+		#h1 = remove_accents(h1)
+		#h2 = remove_accents(h2)
+		#ref = remove_accents(ref)
+		#d = opts.delta
+		
+		h1s = stemmer(h1)
+		h2s =stemmer(h2)
+		refs = stemmer(ref) 
+
+		h1N = ngrammer(h1s)
+		h2N = ngrammer(h2s)
+		refN = ngrammer(refs)
+		#print ref2
+		rsetN = set(refN)
+		#ref = nltk.pos_tag(ref)
+		rset = set(ref)
+
+		h1_exact_ctN,h1_remN = exact_matches(h1N, rsetN)
+		h2_exact_ctN,h2_remN = exact_matches(h2N, rsetN)
+		#h1_exact_ct,h1_rem = exact_matches(h1, rset)
+		#h2_exact_ct,h2_rem = exact_matches(h2, rset)
+
+		#h1_syn_ct,h1_rem = syn_matches(h1_rem, rset)
+		#h2_syn_ct,h2_rem = syn_matches(h2_rem, rset)
+		#h1_stem_ct,h1_rem = stem_matches(h1_rem, rset)
+		#h2_stem_ct,h2_rem = stem_matches(h2_rem, rset)
+		#if h1_syn_ct != 0 or h2_syn_ct != 0:
+		#	sys.stderr.write(str(h1_syn_ct)+'  '+str(h2_syn_ct))
+		#h1_fmatch = func_matches(h1, rset)
+		#h2_fmatch = func_matches(h2, rset)
+		#h1_match = d*(h1_match-h1_fmatch)+((d-1)*h1_fmatch)
+		#h2_match = d*(h2_match-h2_fmatch)+((d-1)*h2_fmatch)
+		h1_match = h1_exact_ctN #+ h1_exact_ct #+ h1_syn_ct*opts.syndisc
+		h2_match = h2_exact_ctN #+ h2_exact_ct #+ h2_syn_ct*opts.syndisc
+		p1 = h1_match/float(len(h1))
+		p2 = h2_match/float(len(h2))
+		r1 = h1_match/float(len(ref))
+		r2 = h2_match/float(len(ref))
+		a = opts.alpha
+		M1 = Hmean(a,p1,r1)
+		M2 = Hmean(a,p2,r2)
+		H=(-1 if M1 > M2 else # \begin{cases}
+			(0 if M1 == M2
+				else 1)) # \end{cases}
+		print H
+# convention to allow import of this file as a module
+if __name__ == '__main__':
+    main()
