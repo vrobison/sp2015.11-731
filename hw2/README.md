@@ -16,3 +16,5 @@ The `data/` directory contains the following two files:
  - `data/train.gold` contains gold standard human judgements indicating whether the first hypothesis (hyp1) or the second hypothesis (hyp2) is better or equally good/bad for training data.
 
 Until the deadline the scores shown on the leaderboard will be accuracy on the training set. After the deadline, scores on the blind test set will be revealed and used for final grading of the assignment.
+
+stemplusMETEOR: tri- bi- and unigrams, full points for exact matches, partial points for stem matches (Lancaster stemmer), tuned parameters controlling partial point value and precision/recall tradeoff
