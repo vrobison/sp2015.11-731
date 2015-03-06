@@ -17,4 +17,10 @@ The `data/` directory contains the following two files:
 
 Until the deadline the scores shown on the leaderboard will be accuracy on the training set. After the deadline, scores on the blind test set will be revealed and used for final grading of the assignment.
 
-stemplusMETEOR: tri- bi- and unigrams, full points for exact matches, partial points for stem matches (Lancaster stemmer), tuned parameters controlling partial point value and precision/recall tradeoff
+normstemSnowball: stems using Snowball stemmer, removes accent marks nlyk tool can't handle 
+
+stemplusMETEOR: takes output of normstemSnowball, scores on tri- bi- and unigrams, full points for exact matches, partial points for stem matches, tuned parameters controlling partial point value and precision/recall tradeoff.
+
+stem_func_len: tri- bi- and unigrams, full points for exact matches, partial points for function word unigrams (list of function words copied from ladognome), partial ponts for stem matches, and tuned recall-precision tradeoff.
+
+WordNet synonym matching attemped, but runs slow as molasses and was thus abandoned, functions included but calls to them are commented out.

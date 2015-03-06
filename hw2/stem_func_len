@@ -1,0 +1,187 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import argparse # optparse is deprecated
+from itertools import islice # slicing for iterators
+from nltk.corpus import wordnet as wn
+from nltk.stem.porter import PorterStemmer
+import nltk
+import sys
+import unicodedata
+from unidecode import unidecode
+
+# DRY
+
+def exact_matches(h, ref):
+	ct = 0
+	rem = []
+	for n,w in enumerate(h):
+		if w in ref:
+			ct +=1
+		else: rem.append(w)
+	return (ct,rem) 
+
+def Hmean(a,p,r):
+	if p == 0 and r == 0:
+		return 0
+	else: return 2*p*r/(a*p+(1-a)*r)
+
+def ngrammer(h):
+	ngrams = []
+	for n in range(len(h)-2):
+		ngrams.append(h[n] + ' '+h[n+1])
+	for n in range(len(h)-3):
+		ngrams.append(h[n] + ' '+h[n+1]+' '+h[n+2])
+	return ngrams
+
+def synByPOS(word,POS):
+	if POS[0] == 'N':
+		return wn.synsets(word,pos=wn.NOUN)
+	elif POS[0] == 'V':
+		return wn.synsets(word,pos=wn.VERB)
+	elif POS[:2] == 'RB':
+			return wn.synsets(word,pos=wn.ADV)
+	elif POS[0] == 'J':
+		return wn.synsets(word,pos=wn.ADJ)
+
+def convert_to_syn(h,ref): #lists!
+	synct = 0
+	allSyns = []
+	convertToSyn = []
+	for r,POS in ref:
+		#print POS
+		rsyns = set()
+		syns = synByPOS(r,POS)
+		if syns:
+			for s in syns:
+				s = str(s)[8:-7]
+				rsyns.add(s)
+		allSyns.append(rsyns)
+	for i, w in enumerate(h):
+		for n,rS in enumerate(allSyns):
+			if w not in ref and w in rS:
+				w2 = ref[n][0]
+			else: 
+				w2 = w
+		if w != w2: synct +=1
+		convertToSyn.append(w2)		 
+	return (convertToSyn, synct) 
+
+def syn_matches(hyp,ref):
+	paths=set([0])
+	rem = []
+	synct = 0
+	for h in hyp:
+		hs = wn.synsets(h)
+		for r in ref:
+			rs = wn.synsets(r) 	
+			for i in hs:
+				for j in rs:
+					ps = i.path_similarity(j)
+					if ps != None:
+						paths.add(ps)	
+		best_score = max(paths)
+		if best_score > .95:
+			synct+=1
+		else:
+			rem.append(h)
+	#sys.stderr.write(str(len(hyp))+' '+str(synct)+'\n')
+	return (synct,rem)
+
+def main():
+	parser = argparse.ArgumentParser(description='Evaluate translation hypotheses.')
+    # PEP8: use ' and not " for strings
+	parser.add_argument('-i', '--input', default='data/train-test.hyp1-hyp2-ref',
+            help='input file (default data/train-test.hyp1-hyp2-ref)')
+	parser.add_argument('-n', '--num_sentences', default=None, type=int,
+            help='Number of hypothesis pairs to evaluate')
+	parser.add_argument('-a', '--alpha', default=0.5, type=float,
+            help='recall vs. precision tradeoff')
+	parser.add_argument('-t','--stemdisc',default=.5,type=float,
+			help='weight of content vs function words')
+	parser.add_argument('-s','--syndisc',default=1,type=float,
+			help='value to discount synonym matches by')
+	parser.add_argument('-f','--f',default=1,type=float,
+			help='value to discount function word matches by')
+	parser.add_argument('-l','--lengthdisc',default=0,type = float,
+			help='value to tune hyp vs. ref length difference effect on score')
+    # note that if x == [1, 2, 3], then x[:None] == x[:] == x (copy); no need for sys.maxint
+	opts = parser.parse_args()
+    # we create a generator and avoid loading all sentences into a list
+	def sentences():
+		with open(opts.input) as f:
+			for pair in f:
+				yield [sentence.strip().split() for sentence in pair.split(' ||| ')]
+    # note: the -n option does not work in the original code
+		
+	for h1, h2, ref, h1stem, h2stem, refstem in islice(sentences(), opts.num_sentences):
+		funcwords = set(["you", "i", "to", "the", "a", "and", "that", "it", "of", "me", "what", "is", "in", "this", "know", "i'm", "for", "no", "have", "my", "don't", "just", "not", "do", "be", "on", "your", "was", "we", "it's", "with", "so", "but", "all", "well", "are", "he", "oh", "about", "right"])
+		#various attempts to use wordnet, abandoned because they're too slow
+		#refPOS = nltk.pos_tag(ref)
+	
+		#h1syn,h1synct = convert_to_syn(h1,refPOS)
+		#h2syn,h2synct = convert_to_syn(h2,refPOS)
+		#if (h1syn != h1): sys.stderr.write('h1: '+' '.join(h1)+'\nh1syn: '+' '.join(h1syn)+'\nref: '+' '.join(ref)+'\n\n')
+		#h1Nsyn = ngrammer(h1syn)
+		#h2Nsyn = ngrammer(h2syn)
+		#h1setsyn = set(h1syn+h1Nsyn)
+		#h2setsyn = set(h2syn+h2Nsyn)
+
+		h1len = float(len(h1))/len(ref)
+		h2len = float(len(h2))/len(ref)
+		#
+		h1lenscore = abs(h1len-1)*opts.lengthdisc
+		h2lenscore = abs(h2len-1)*opts.lengthdisc
+		
+		h1N = ngrammer(h1)
+		h2N = ngrammer(h2)
+		refN = ngrammer(ref)
+
+		#bi/trigrams of stemmed words
+		h1Nstem = ngrammer(h1stem)
+		h2Nstem = ngrammer(h2stem)
+		refNstem = ngrammer(refstem)
+
+		h1set = set(h1N + h1)
+		h2set = set(h2N + h2)
+		h1setstem = set(h1Nstem + h1stem)
+		h2setstem = set(h2Nstem + h2stem)
+		refset = set(refN + ref)
+		refsetstem = set(refNstem + refstem)		
+	
+		h1_exact_ct,h1_rem = exact_matches(h1set,refset)
+		h2_exact_ct,h2_rem = exact_matches(h2set, refset)
+		
+		h1_stem_ct,h1_stem_rem = exact_matches(h1setstem, refsetstem)
+		h2_stem_ct,h2_stem_rem = exact_matches(h2setstem, refsetstem)
+
+		#warning: slow as molasses
+		#h1_syn_ct,h1_syn_rem = syn_matches(h1_rem,refset-h1set) 
+		#h2_syn_ct,h2_syn_rem = syn_matches(h2_rem,refset-h2set)
+		
+		h1_func = h1set and funcwords
+		h2_func = h2set and funcwords
+		ref_func = refset and funcwords
+
+		h1_func_match_ct = len(h1_func and ref_func)
+		h2_func_match_ct = len(h2_func and ref_func)
+
+		h1_match = h1_exact_ct-h1_func_match_ct + opts.f*h1_func_match_ct + opts.stemdisc*(h1_stem_ct - h1_exact_ct)
+		h2_match = h2_exact_ct-h2_func_match_ct + opts.f*h2_func_match_ct + opts.stemdisc*(h2_stem_ct - h1_exact_ct)
+		
+
+		p1 = h1_match/float(len(h1))
+		p2 = h2_match/float(len(h2))
+		r1 = h1_match/float(len(ref))
+		r2 = h2_match/float(len(ref))
+		a = opts.alpha
+		M1 = Hmean(a,p1,r1)-h1lenscore
+		M2 = Hmean(a,p2,r2)-h2lenscore
+		H=(-1 if M1 > M2 else # \begin{cases}
+			(0 if M1 == M2
+				else 1)) # \end{cases}
+		print H
+		#sys.stderr.write('.')
+# convention to allow import of this file as a module
+if __name__ == '__main__':
+    main()

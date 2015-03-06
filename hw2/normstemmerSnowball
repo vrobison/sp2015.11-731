@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import argparse # optparse is deprecated
+from itertools import islice # slicing for iterators
+from nltk.corpus import wordnet as wn
+from nltk.stem import SnowballStemmer
+import nltk
+import sys
+import unicodedata
+from unidecode import unidecode
+
+# DRY
+
+def main():
+	parser = argparse.ArgumentParser(description='Evaluate translation hypotheses.')
+    # PEP8: use ' and not " for strings
+	parser.add_argument('-i', '--input', default='data/train-test.hyp1-hyp2-ref',
+            help='input file (default data/train-test.hyp1-hyp2-ref)')
+	parser.add_argument('-n', '--num_sentences', default=None, type=int,
+            help='Number of hypothesis pairs to evaluate')
+	parser.add_argument('-a', '--alpha', default=0.5, type=float,
+            help='recall vs. precision tradeoff')
+	parser.add_argument('-d','--delta',default=.5,type=float,
+			help='weight of content vs function words')
+	parser.add_argument('-s','--syndisc',default=1,type=float,
+			help='value to discount synonym matches by')
+    # note that if x == [1, 2, 3], then x[:None] == x[:] == x (copy); no need for sys.maxint
+	opts = parser.parse_args()
+    # we create a generator and avoid loading all sentences into a list
+	def sentences():
+		with open(opts.input) as f:
+			for pair in f:
+				yield [sentence.strip().decode('utf8').split() for sentence in pair.split(' ||| ')]
+    # note: the -n option does not work in the original code
+	funcWords =set(['it','a','an','the','to','be','will','is'])
+	snowball_stemmer = SnowballStemmer("english")
+	for h1, h2, ref in islice(sentences(), opts.num_sentences):
+		h1stemmed = []
+		h2stemmed = []
+		refstemmed = []
+		h1ascii = []
+		h2ascii = []
+		refascii = []
+		for h in h1:
+			h1ascii.append(unidecode(h))
+			h1stemmed.append(snowball_stemmer.stem(unidecode(h)))
+		for h in h2:
+			h2ascii.append(unidecode(h))
+			h2stemmed.append(snowball_stemmer.stem(unidecode(h)))
+		for r in ref:		
+			refascii.append(unidecode(r))	
+			refstemmed.append(snowball_stemmer.stem(unidecode(r)))
+		print ' '.join(h1ascii)+' ||| '+' '.join(h2ascii)+' ||| '+' '.join(refascii)+' ||| '+' '.join(h1stemmed)+' ||| '+' '.join(h2stemmed)+' ||| '+' '.join(refstemmed)
+		
+# convention to allow import of this file as a module
+if __name__ == '__main__':
+    main()
