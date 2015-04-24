@@ -1,0 +1,273 @@
+#!/usr/bin/env python
+import sys
+import argparse
+import numpy as np
+from scipy.sparse import csr_matrix
+from nltk.stem import SnowballStemmer
+from collections import defaultdict
+from utils import read_ttable
+
+snowball_stemmer = SnowballStemmer("english")
+
+def dot(f, w):
+	s = 0.0
+	for k in f.keys():
+		s += f[k] * w[wvocabulary[k]]
+	return s
+
+def updatew(wi,xcy,ynot):
+	#(phrase, prev, next, y, origfeat,pcase,ncase)
+	a = 0.1
+	dLdw = {}
+	dLdw[xcy[1]] = -1.0
+	dLdw[xcy[2]] = -1.0
+	dLdw[ynot[1]] = 1.0
+	dLdw[ynot[2]] = 1.0
+	
+	for f in xcy[4].keys():
+		dLdw[f] = ynot[4][f] - xcy[4][f]	
+	if xcy[5] != ynot[5]:
+		dLdw[xcy[5]] = -1.0
+		dLdw[ynot[5]] = 1.0
+	#if xcy[6] != ynot[6]:
+	#	dLdw[xcy[6]] = -1.0
+	#	dLdw[ynot[6]] = 1.0 
+	adLdw = {}
+	for i in dLdw.keys():
+		adLdw[i] = a*dLdw[i]
+	wiplus = wi
+	for k in adLdw.keys():
+		wiplus[wvocabulary[k]] = (wi[wvocabulary[k]] - adLdw[k])
+	return wiplus
+	
+def L(xcy,ynot):
+	#xcy: (x,prev,next,y*,feats,pcase,ncase)
+	#ynot: (x,prev,next,y-,feats2,pcase,ncase)
+	g = 1 #0.000005
+	#indexes in w of form f1,f2,f3,f4,x_y_cleft, x_y_cright
+	#for ynot in fxcynot: #for each wrong y
+	diff = {}
+	for f in ynot[4].keys(): #
+		diff[f] = xcy[4][f] - ynot[4][f]
+	#diff in float features
+	diff[xcy[1]] = 1.0
+	diff[xcy[2]] = 1.0
+	diff[ynot[1]] = -1.0
+	diff[ynot[2]] = -1.0
+	if xcy[5] != ynot[5]:
+		diff[xcy[5]] = 1.0
+		diff[ynot[5]] = -1.0
+	#if xcy[6] != ynot[6]:
+	#	diff[xcy[6]] = 1.0
+	#	diff[ynot[6]] = -1.0
+	
+	m = max(0, (g-dot(diff, weights)))
+	#sys.stderr.write(str(m)+'\n')
+	#return max(0,g-(f(x,c,y*)-f(x,c,y`))dot w)
+	return m
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--input', '-i', default='data/dev+test.input')
+parser.add_argument('--train','-tr',default='data/train.input')
+parser.add_argument('--refs', '-r',default='data/train.refs')
+parser.add_argument('--devrefs','-dr',default='data/dev.refs')
+parser.add_argument('--ttable', '-t', default='data/ttable')
+parser.add_argument('--parses','-p',default='data/train.parses')
+parser.add_argument('--devparses','-dp',default='data/dev+test.parses')
+args = parser.parse_args()
+
+translation_table = read_ttable(args.ttable)
+startweights = {'log_prob_tgs': 1.0,'log_prob_sgt': 1.0,'log_lex_prob_tgs':1.0,'log_lex_prob_sgt':1.0} #simple weight vector (1 0 0 0)
+
+#log_prob_sgt = logp(e|f)
+#log_lex_prob_sgt
+reffile = open(args.refs).readlines()
+refs =[]
+for r in reffile: refs.append(r.decode('utf-8').strip())
+
+par= open(args.parses).read().split('\n\n')
+parses =[]
+for p in par: parses.append(p.split('\n'))
+
+dpar= open(args.devparses).read().split('\n\n')
+dparses =[]
+for dp in dpar: dparses.append(dp.split('\n'))
+
+devreffile = open(args.devrefs).readlines()
+devrefs =[]
+for r in devreffile: devrefs.append(r.decode('utf-8').strip())
+
+
+windptr = [0]
+windices = []
+wdata = []
+wvocabulary = {}
+ALLcsr = []
+
+for f in startweights.keys():
+	windex = wvocabulary.setdefault(f,len(wvocabulary))
+	windices.append(windex)
+	wdata.append(startweights[f])
+	
+ix = []
+indptr = [0]
+indices = []
+data = []
+vocabulary = {}
+#set weights
+l=0
+for line in open(args.train):
+	left_context, phrase, right_context = [part.strip() for part in line.decode('utf-8').strip().split('|||')]
+	candidates = [(target,features) for target, features in translation_table[phrase].iteritems()]	
+	xcynot = []	
+	parse = parses[l]
+	if len(left_context.split()) == 0: 
+		pPOS = '<s>'
+	else:
+		pPOS = parse[len(left_context.split())-1].split('\t')[3]
+	if len(right_context.split()) == 0:
+		nPOS = '<\s>'
+	else:
+		nPOS = parse[len(left_context.split())+1].split('\t')[3]
+#	p = parse[len(left_context.split())]
+#	p = p.split('\t')
+#	POS = p[3]
+	#print POS
+	if len(left_context.split()) > 1:
+		left_context = left_context.split()[-1]
+	if len(right_context.split()) > 1:
+		right_context = right_context.split()[0]
+	
+	#left_context = snowball_stemmer.stem(left_context)
+	#right_context = snowball_stemmer.stem(right_context)
+	for y,feat in candidates:
+	
+		prev = 'src:'+phrase+'_tgt:'+y+'_prev:'+left_context
+		next = 'src:'+phrase+'_tgt:'+y+'_next:'+right_context
+		#case = y		
+		#if len(y) > 2:
+		#	case = y[-2:]
+		
+		pcase = 'pPOS:'+pPOS+'_tgt+'+y+'_prev:'+left_context
+		ncase = 'nPOS:'+nPOS+'_tgt:'+y+'_next:'+right_context
+		case = pcase+ncase
+
+		windex = wvocabulary.setdefault(prev, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.1)
+
+		windex = wvocabulary.setdefault(next, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.1)
+
+		windex = wvocabulary.setdefault(case, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.1)
+
+		#windex = wvocabulary.setdefault(ncase, len(wvocabulary))
+		#windices.append(windex)
+		#wdata.append(0.1)
+	l+=1
+windptr.append(len(windices))
+
+
+#feats = csr_matrix((data,indices,indptr),dtype=float).toarray()
+
+weights = csr_matrix((wdata,windices,windptr),dtype=float).toarray()
+weights = weights[0]
+
+vocabset = set()
+for v in wvocabulary.keys():
+	vocabset.add(v)
+sys.stderr.write('finished weight setup')
+
+for round in range(6): #4
+	for l, line in enumerate(open(args.train)):
+		left_context, phrase, right_context = [part.strip() for part in line.decode('utf-8').strip().split('|||')]
+		candidates = [(target,features) for target, features in sorted(translation_table[phrase].iteritems(), key=lambda (t, f): dot(f, weights), reverse=True)]	
+		xcynot = []
+		n = 0
+		#parse = parses[l]
+		#p = parse[len(left_context.split())]
+		#p = p.split('\t')
+		#POS = p[3]
+		parse = parses[l]
+		if len(left_context.split()) == 0: 
+			pPOS = '<s>'
+		else:
+			pPOS = parse[len(left_context.split())-1].split('\t')[3]
+		if len(right_context.split()) == 0:
+			nPOS = '<\s>'
+		else:
+			nPOS = parse[len(left_context.split())+1].split('\t')[3]
+		if len(left_context.split()) > 1:
+			left_context = left_context.split()[-1]
+		if len(right_context.split()) > 1:
+			right_context = right_context.split()[0]
+		
+		for (y,origfeat) in candidates:
+			prev = 'src:'+phrase+'_tgt:'+y+'_prev:'+left_context
+			next = 'src:'+phrase+'_tgt:'+y+'_next:'+right_context
+			case = y		
+			if len(y) > 2:
+				case = y[-2:]
+			pcase = 'pPOS:'+pPOS+'_tgt+'+y+'_prev:'+left_context
+			ncase = 'nPOS:'+nPOS+'_tgt:'+y+'_next:'+right_context
+			case = pcase+ncase
+			if y == refs[l]:
+				xcy = (phrase, prev, next, y, origfeat,case)
+			else: 
+				xcynot.append((phrase, prev, next, y, origfeat,case)) #incorrect
+		for ynot in xcynot:
+			if L(xcy,ynot) != 0:
+				weights = updatew(weights,xcy,ynot)
+				
+sys.stderr.write('finished training\n')
+
+for l, line in enumerate(open(args.input)):
+	left_context, phrase, right_context = [part.strip() for part in line.decode('utf-8').strip().split('|||')]
+	candidates = [(target,features) for target, features in sorted(translation_table[phrase].iteritems(), key=lambda (t, f): dot(f, weights), reverse=True)]
+	c2 = []
+	parse = dparses[l]
+	#print parse
+	#p = parse[len(left_context.split())]
+	#p = p.split('\t')
+	#POS = p[3]
+	#parse = parses[l]
+	if len(left_context.split()) == 0: 
+		pPOS = '<s>'
+	else:
+		pPOS = parse[len(left_context.split())-1].split('\t')[3]
+	if len(right_context.split()) == 0:
+		nPOS = '<\s>'
+	else:
+		nPOS = parse[len(left_context.split())+1].split('\t')[3]
+	if len(left_context.split()) > 1:
+		left_context = left_context.split()[-1]
+	if len(right_context.split()) > 1:
+		right_context = right_context.split()[0]
+	
+	for (y,feat) in candidates:
+		
+		prev = 'src:'+phrase+'_tgt:'+y+'_prev:'+left_context
+		next = 'src:'+phrase+'_tgt:'+y+'_next:'+right_context
+		#case = y		
+		#if len(y) > 2:
+		#	case = y[-2:]
+		pcase = 'pPOS:'+pPOS+'_tgt+'+y+'_prev:'+left_context
+		ncase = 'nPOS:'+nPOS+'_tgt:'+y+'_next:'+right_context
+		case = pcase + ncase
+		if prev in vocabset: feat[prev] = 1
+		if next in vocabset: feat[next] = 1
+		#if pcase in vocabset: feat[pcase] = 1
+		#if ncase in vocabset: feat[ncase] = 1
+		if case in vocabset: feat[case] = 1
+		c2.append((y,dot(feat,weights)))
+	c3 = sorted(c2, key=lambda x: x[1], reverse=True)
+	cfinal = []
+	for i in range(len(c3)):
+		cfinal.append(c3[i][0])
+	print ' ||| '.join(cfinal).encode('utf-8')
+	sys.stderr.write('.')
+	#sys.stderr.write(' ||| '.join(candidates).encode('utf-8'))
+	

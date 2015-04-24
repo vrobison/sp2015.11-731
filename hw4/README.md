@@ -1,3 +1,10 @@
+My baseline implementation is apparently freakishly fast compared to everyone I've talked to, making me suspect something is wonky, otherwise I just haven't found the right combination of alpha/gamma/iterations over the training set. Several attempts to predict case using lexical context or the POS of the context made results worse; I expected these to at least pick up prepositional and genetive case stuff. So any additional time I can spare on this will go into better case prediction.
+
+rerank4: best baseline so far
+case: case prediction attempt #1, lexical
+case3: case prediction attempt #3, syntactic (attempt 2 similar, but more broken, not pushed to public)
+
+
 There are three Python programs here (`-h` for usage):
 
  - `./rerank` a simple reranker that simply sorts candidate translations on log p(czech|english)
