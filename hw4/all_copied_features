@@ -1,0 +1,326 @@
+#!/usr/bin/env python
+import sys
+import argparse
+import numpy as np
+from scipy.sparse import csr_matrix
+import random
+
+from collections import defaultdict
+from utils import read_ttable
+
+def dot(f, w):
+	s = 0.0
+	for k in f.keys():
+		s += f[k] * w[wvocabulary[k]]
+	return s
+
+def updatew(wi,xcy,ynot):
+	#x,prev,next,y,origfeats
+	a = 0.1
+	dLdw = {}
+	dLdw[xcy[1]] = -1.0
+	dLdw[xcy[2]] = -1.0
+	dLdw[ynot[1]] = 1.0
+	dLdw[ynot[2]] = 1.0	
+	for f in ynot[4].keys(): 
+		dLdw[f] = ynot[4][f] - xcy[4][f] 
+	if xcy[5] != ynot[5]:
+		dLdw[xcy[5]] = -1.0
+		dLdw[ynot[5]] = 1.0
+	if xcy[6] != ynot[6]:
+		dLdw[xcy[6]] = -1.0
+		dLdw[ynot[6]] = 1.0
+	if xcy[7] != ynot[7]:
+		dLdw[xcy[7]] = -1.0
+		dLdw[ynot[7]] = 1.0
+	if xcy[8] != ynot[8]:
+		dLdw[xcy[8]] = -1.0
+		dLdw[ynot[8]] = 1.0
+	if xcy[9] != ynot[9]:
+		dLdw[xcy[9]] = -1.0
+		dLdw[ynot[9]] = 1.0
+	if xcy[10] != ynot[10]:
+		dLdw[xcy[10]] = -1.0
+		dLdw[ynot[10]] = 1.0
+	if xcy[11] != ynot[11]:
+		dLdw[xcy[11]] = -1.0
+		dLdw[ynot[11]] = 1.0
+
+	adLdw = {}
+	for i in dLdw.keys():
+		adLdw[i] = a*dLdw[i]
+	wiplus = wi
+	for k in adLdw.keys():
+		wiplus[wvocabulary[k]] = (wi[wvocabulary[k]] - adLdw[k])
+	return wiplus
+
+def L(xcy,ynot,g):
+	#xcy: (x,prev,next,y*,feats)
+	#ynot: (x,prev,next,y-,feats2)
+ 	#0.000005 0.387528 #1->0.390202 
+	#indexes in w of form f1,f2,f3,f4,x_y_cleft, x_y_cright
+	#for ynot in fxcynot: #for each wrong y
+	diff = {}
+	
+	#prev& next
+	diff[xcy[1]] = 1.0
+	diff[xcy[2]] = 1.0
+	diff[ynot[1]] = -1.0
+	diff[ynot[2]] = -1.0
+	for f in ynot[4].keys(): #orig float features
+		diff[f] = xcy[4][f] - ynot[4][f]
+	if xcy[5] != ynot[5]: #parent
+		diff[xcy[5]] = 1.0
+		diff[ynot[5]] = -1.0
+	if xcy[6] != ynot[6]: #deprole
+		diff[xcy[6]] = 1.0
+		diff[ynot[6]] = -1.0
+	if xcy[7] != ynot[7]: #POScase
+		diff[xcy[7]] = 1.0
+		diff[ynot[7]] = -1.0	
+	if xcy[8] != ynot[8]: #DEPcase
+		diff[xcy[8]] = 1.0
+		diff[ynot[8]] = -1.0	
+	if xcy[9] != ynot[9]: #SUBJcase
+		diff[xcy[9]] = 1.0
+		diff[ynot[9]] = -1.0	
+	if xcy[10] != ynot[10]: #Pcase
+		diff[xcy[10]] = 1.0
+		diff[ynot[10]] = -1.0
+	if xcy[11] != ynot[11]: #Ncase
+		diff[xcy[11]] = 1.0
+		diff[ynot[11]] = -1.0
+	m = max(0, (g-dot(diff, weights)))
+	return m
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--input', '-i', default='data/dev+test.input')
+parser.add_argument('--train','-tr',default='data/train.input')
+parser.add_argument('--refs', '-r',default='data/train.refs')
+parser.add_argument('--ttable', '-t', default='data/ttable')
+parser.add_argument('--parses','-p',default='data/train.parses')
+parser.add_argument('--devparses','-dp',default='data/dev+test.parses')
+args = parser.parse_args()
+
+#line.decode('utf-8').strip()
+
+par= open(args.parses).read().split('\n\n')
+parses =[]
+for p in par: parses.append(p.split('\n'))
+for p in range(len(parses)):
+	for l in range(len(parses[p])):
+		parses[p][l] = parses[p][l].decode('utf-8').strip()
+
+dpar= open(args.devparses).read().split('\n\n')
+dparses =[]
+for dp in dpar: dparses.append(dp.split('\n'))
+for dp in range(len(dparses)):
+	for dl in range(len(dparses[dp])):
+		dparses[dp][dl] = dparses[dp][dl].decode('utf-8').strip()
+
+translation_table = read_ttable(args.ttable)
+startweights = {'log_prob_tgs': 0.0,'log_prob_sgt': 0.0,'log_lex_prob_tgs':0.0,'log_lex_prob_sgt':0.0} #simple weight vector (1 0 0 0)
+
+windptr = [0]
+windices = []
+wdata = []
+wvocabulary = {}
+ALLcsr = []
+
+for f in startweights.keys():
+	windex = wvocabulary.setdefault(f,len(wvocabulary))
+	windices.append(windex)
+	wdata.append(startweights[f])
+	
+ix = []
+indptr = [0]
+indices = []
+data = []
+vocabulary = {}
+for l, line in enumerate(open(args.train)):
+	left_context, phrase, right_context = [part.strip() for part in line.decode('utf-8').strip().split('|||')]
+	candidates = [(target,features) for target, features in translation_table[phrase].iteritems()]	
+	xcynot = []	
+	parse = parses[l]
+	lineOfPhrase = parse[len(left_context.split())]
+	dep = lineOfPhrase.split('\t')[-1]
+	parentIdx = int(lineOfPhrase.split('\t')[-2])-1
+	parentword = ''
+	if parentIdx == -1: parentword = 'ROOT'
+	else: parentword = parse[parentIdx].split('\t')[1]
+	POS = lineOfPhrase.split('\t')[3]	
+
+	for y,feat in candidates:
+		left_context = ('<s> '+left_context).strip()
+		right_context = (right_context + ' <\s>').strip()
+		left_context = left_context.split()[-1]
+		right_context = right_context.split()[0]
+		prev = 'src:'+phrase+'_tgt:'+y+'_prev:'+left_context
+		next = 'src:'+phrase+'_tgt:'+y+'_next:'+right_context
+		parent = 'src:'+phrase+'_tgt:'+y+'_parent:'+parentword	
+		deprole = 'src:'+phrase+'_tgt:'+y+'_dep:'+dep	
+		suffix = y
+		if len(y) > 2: suffix = y[-2:]
+		POScase = 'POS:'+POS+'_case:'+suffix
+		DEPcase = 'DEP:'+dep+'_case:'+suffix
+		SUBJcase = 'SUBJ:'+parentword+'_case:'+suffix
+		Pcase = 'PREV:'+left_context+'_case:'+suffix
+		Ncase = 'NEXT:'+right_context+'_case:'+suffix
+	
+		windex = wvocabulary.setdefault(prev, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(next, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(parent, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(deprole, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(POScase, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(DEPcase, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(SUBJcase, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(Pcase, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+		windex = wvocabulary.setdefault(Ncase, len(wvocabulary))
+		windices.append(windex)
+		wdata.append(0.0)
+
+windptr.append(len(windices))
+#feats = csr_matrix((data,indices,indptr),dtype=float).toarray()
+#print wvocabulary
+				#print feats
+weights = csr_matrix((wdata,windices,windptr),dtype=float).toarray()
+weights = weights[0]
+
+vocabset = set()
+for v in wvocabulary.keys():
+	vocabset.add(v)
+sys.stderr.write('finished weight setup')
+#print weights
+#sys.stderr.write(str(len(feats[0]))+' '+str(len(weights[0]))+' '+str(len(ix)))
+
+reffile = open(args.refs).readlines()
+refs =[]
+for r in reffile: refs.append(r.strip())
+
+for iteration in range(1): #5->0.390308 #4-->0.39029
+	sys.stderr.write('starting iteration'+str(iteration+1)+'\n')
+	data = []
+	for l, line in enumerate(open(args.train)):
+		data.append((line + ' ||| '+refs[l]))
+	#random.shuffle(data)
+	for l, line in enumerate(data):
+		left_context, phrase, right_context,ref = [part.strip() for part in line.decode('utf-8').strip().split('|||')]
+		
+		candidates = [(target,features) for target, features in sorted(translation_table[phrase].iteritems(), key=lambda (t, f): dot(f, weights), reverse=True)]	
+		xcynot = []
+	
+		parse = parses[l]
+		lineOfPhrase = parse[len(left_context.split())]
+		dep = lineOfPhrase.split('\t')[-1]
+		parentIdx = int(lineOfPhrase.split('\t')[-2])-1
+		parentword = ''
+		if parentIdx == -1: parentword = 'ROOT'
+		else: parentword = parse[parentIdx].split('\t')[1]
+		POS = lineOfPhrase.split('\t')[3]	
+
+		n = 0
+		left_context = ('<s> '+left_context).strip()
+		right_context = (right_context + ' <\s>').strip()
+		if len(left_context.split()) > 1:
+			left_context = left_context.split()[-1]
+		if len(right_context.split()) > 1:
+			right_context = right_context.split()[0]
+		for (y,origfeat) in candidates:
+			prev = 'src:'+phrase+'_tgt:'+y+'_prev:'+left_context
+			next = 'src:'+phrase+'_tgt:'+y+'_next:'+right_context
+			parent = 'src:'+phrase+'_tgt:'+y+'_parent:'+parentword
+			deprole = 'src:'+phrase+'_tgt:'+y+'_dep:'+dep
+			suffix = y
+			if len(y) > 2: suffix = y[-2:]
+			POScase = 'POS:'+POS+'_case:'+suffix
+			DEPCase = 'DEP:'+dep+'_case:'+suffix
+			SUBJcase = 'SUBJ:'+parentword+'_case:'+suffix
+			Pcase = 'PREV:'+left_context+'_case:'+suffix
+			Ncase = 'NEXT:'+right_context+'_case:'+suffix
+			if y == ref:
+				xcy = (phrase, prev, next, y, origfeat, parent, deprole, POScase, DEPcase, SUBJcase, Pcase, Ncase)
+		#		xcy = (phrase,prev,next,y,origfeat,0,0,0,0,0,0,0)
+			else: 
+				xcynot.append((phrase, prev, next, y, origfeat, parent, deprole, POScase, DEPcase, SUBJcase, Pcase, Ncase))
+				#xcynot.append((phrase,prev,next,y,origfeat,0,0,0,0,0,0,0))	
+ #incorrect
+		for ynot in xcynot:
+			if L(xcy,ynot,20.0) != 0: #float is gamma
+				weights = updatew(weights,xcy,ynot)
+	
+sys.stderr.write('finished training')
+
+for l,line in enumerate(open(args.input)):
+	left_context, phrase, right_context = [part.strip() for part in line.decode('utf-8').strip().split('|||')]
+	candidates = [(target,features) for target, features in sorted(translation_table[phrase].iteritems(), key=lambda (t, f): dot(f, weights), reverse=True)]
+	c2 = []
+	parse = dparses[l]
+	lineOfPhrase = parse[len(left_context.split())]
+	dep = lineOfPhrase.split('\t')[-1]
+	parentIdx = int(lineOfPhrase.split('\t')[-2])-1
+	parentword = ''
+	if parentIdx == -1: parentword = 'ROOT'
+	else: parentword = parse[parentIdx].split('\t')[1]
+	POS = lineOfPhrase.split('\t')[3]	
+
+	left_context = ('<s> '+left_context).strip()
+	right_context = (right_context + ' <\s>').strip()
+	if len(left_context.split()) > 1:
+		left_context = left_context.split()[-1]
+	if len(right_context.split()) > 1:
+		right_context = right_context.split()[0]
+	for (y,feat) in candidates:
+		prev = 'src:'+phrase+'_tgt:'+y+'_prev:'+left_context
+		next = 'src:'+phrase+'_tgt:'+y+'_next:'+right_context
+		parent = 'src:'+phrase+'_tgt:'+y+'_parent:'+parentword
+		deprole = 'src:'+phrase+'_tgt:'+y+'_dep:'+dep
+		suffix = y
+		if len(y) > 2: suffix = y[-2:]
+		POScase = 'POS:'+POS+'_case:'+suffix
+		DEPcase = 'DEP:'+dep+'_case:'+suffix
+		SUBJcase = 'SUBJ:'+parentword+'_case:'+suffix
+		Pcase = 'PREV:'+left_context+'_case:'+suffix
+		Ncase = 'NEXT:'+right_context+'_case:'+suffix
+		if prev in vocabset: feat[prev] = 1.0
+		if next in vocabset: feat[next] = 1.0
+		if parent in vocabset: feat[parent] = 1.0
+		if deprole in vocabset: feat[deprole] = 1.0
+		if POScase in vocabset: feat[POScase] = 1.0
+		if DEPcase in vocabset: feat[DEPcase] = 1.0
+		if SUBJcase in vocabset: feat[SUBJcase] = 1.0
+		if Pcase in vocabset: feat[Pcase] = 1.0
+		if Ncase in vocabset: feat[Ncase] = 1.0
+			#sys.stderr.write('using dep feature...')
+		sys.stderr.write(str(dot(feat,weights))+'\t')
+		c2.append((y,dot(feat,weights)))
+	c3 = sorted(c2, key=lambda x: x[1], reverse=True)
+	cfinal = []
+	for i in range(len(c3)):
+		cfinal.append(c3[i][0])
+	print ' ||| '.join(cfinal).encode('utf-8')
+	sys.stderr.write('.')
+	#sys.stderr.write(' ||| '.join(candidates).encode('utf-8'))
