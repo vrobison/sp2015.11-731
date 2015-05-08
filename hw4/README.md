@@ -4,6 +4,10 @@ rerank4: best baseline so far
 case: case prediction attempt #1, lexical
 case3: case prediction attempt #3, syntactic (attempt 2 similar, but more broken, not pushed to public)
 
+-----------------update----------------
+Something funny is going on. I've run Seven's rerank_dict with the parameters specified in her readme and got different results, so either I'm not understanding her readme corectly, it has an error, or my computer thinks 2+2=5. (I think I also ran kk's code earlier in the week and likewise got a lower MRR than he reports.) I've already double- and triple-checked that my data is correctly updated. I can now pass the baseline on the dev set reliably (though not by much) using only the training data, but still crash and burn on the test set.
+
+all_copied_features2: souped up with a bunch more features gleaned from other student's code-I think this version copies features from Yohan and Perilon
 
 There are three Python programs here (`-h` for usage):
 
